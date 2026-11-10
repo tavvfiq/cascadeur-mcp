@@ -741,6 +741,26 @@ def dispatch(method, p, bridge_state):
                 if p.get("query", "").lower() in (k + " " + v["category"]).lower()
             ]
         }
+    if method == "physics_settings":
+        from . import physics_settings
+
+        return dict(
+            scene=view.name(),
+            settings=physics_settings.read(app, p.get("query", "")),
+            note="Values of the active scene's Physics Settings panel. Read through the UI; not a supported Cascadeur API.",
+        )
+    if method == "set_physics_settings":
+        from . import physics_settings
+
+        if p["expected_scene"] != view.name():
+            raise ValueError("Active scene changed; inspect before editing.")
+        if not p.get("changes"):
+            raise ValueError("Provide at least one change.")
+        return dict(
+            scene=view.name(),
+            changed=physics_settings.write(app, p["changes"]),
+            note="AutoPhysics recomputes from these settings; re-check the preview and snap again before saving.",
+        )
     if method == "run_action":
         from .actions import ACTIONS
 

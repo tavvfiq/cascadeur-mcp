@@ -27,6 +27,7 @@ async def test_real_stdio_handshake_tools_resource_and_validation(tmp_path, scri
             assert ("cascadeur_run_script" in names) == scripts
             assert "cascadeur_render_video" not in names
             assert "cascadeur_animate_transforms" in names
+            assert {"cascadeur_physics_settings", "cascadeur_set_physics_settings"} <= names
             guide = await client.read_resource("cascadeur://guide")
             assert "finger" in guide.contents[0].text.lower()
             status = await client.call_tool("cascadeur_status", {})

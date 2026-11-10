@@ -63,4 +63,48 @@ def test_setup_is_standalone_and_client_configs_agree(tmp_path):
     assert codex["args"] == claude["args"] == cursor["args"]
     assert "--allow-scripts" not in codex["args"]
     assert (out / "app" / "cascadeur_mcp" / "operations.py").is_file()
+    assert (out / "app" / "cascadeur_mcp" / "physics_settings.py").is_file()
     compile((out / "start_bridge.py").read_text(), "startup", "exec")
+
+
+def test_physics_setting_values_are_type_and_range_checked():
+    from cascadeur_mcp.physics_settings import _coerce
+    from cascadeur_mcp.server import PhysicsSettingChange
+
+    slider = {"kind": "float", "min": 0.0, "max": 100.0}
+    assert _coerce(30, slider) == 30.0
+    for bad in (150, -1, True, "30", float("nan")):
+        with pytest.raises(ValueError):
+            _coerce(bad, slider)
+    switch = {"kind": "bool"}
+    assert _coerce(True, switch) is True
+    with pytest.raises(ValueError):
+        _coerce(1, switch)
+    integer = {"kind": "int", "min": 1.0, "max": 100.0}
+    assert _coerce(25, integer) == 25
+    with pytest.raises(ValueError):
+        _coerce(2.5, integer)
+    with pytest.raises(ValidationError):
+        PhysicsSettingChange(group="AutoPhysics", name="Secondary alpha", value=float("inf"))
+    with pytest.raises(ValidationError):
+        PhysicsSettingChange(group="AutoPhysics", name="Secondary alpha", value=1, extra=1)
+
+
+def test_every_bridge_operation_is_classified_for_motion_refresh():
+    import re
+    from pathlib import Path
+
+    import cascadeur_mcp.operations as ops
+    from cascadeur_mcp.server import READ_METHODS
+
+    source = Path(ops.__file__).read_text()
+    methods = set(re.findall(r'method == "([a-z_]+)"', source))
+    for group in re.findall(r"method in \(([^)]*)\)", source):
+        methods |= set(re.findall(r'"([a-z_]+)"', group))
+    edits = {
+        "activate_scene", "animate_transforms", "import_fbx", "mirror", "new_scene",
+        "open_scene", "remove_keys", "run_action", "set_interpolation", "set_keys",
+        "set_physics_settings", "set_pose", "set_properties", "set_range",
+    }
+    assert not READ_METHODS & edits
+    assert methods <= READ_METHODS | edits, methods - READ_METHODS - edits

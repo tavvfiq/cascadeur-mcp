@@ -24,7 +24,8 @@ The server gives access to animation controls. It does not generate a finished p
 | Advanced rig data | `get_object`, `set_properties` | Use actual returned data names and types. Some data is static, unavailable, or solver-owned. |
 | Mirror | `mirror` | Needs rig mirror mappings. Interval mode uses the current track/frame selection. |
 | Physics, AutoPosing, retargeting, cycles | `list_actions`, `select_objects`, `select_frames`, `run_action` | Menu actions are context-dependent, may be toggles, and have no completion acknowledgement. |
-| Check arcs, drift and sudden jumps | `sample_motion`, `get_pose` | Sampling measures positions; it does not prove contact, balance, or natural movement. |
+| AutoPhysics/physics settings (secondary motion, alphas, ragdoll, corrector weights) | `physics_settings`, `set_physics_settings` | Per scene. Read through the Physics Settings panel UI; the panel must be visible. Values are range-checked and read back. |
+| Check arcs, drift and sudden jumps | `sample_motion`, `get_pose` | Sampling measures positions; it does not prove contact, balance, or natural movement. Inbetweens can be stale right after keying; `sample_motion` refreshes them (see below). |
 | Visual inspection | `get_camera`, `set_camera`, `frame_objects`, `set_view_mode`, `capture_viewport` | Use `View` for clean shaded review. `Mesh` is an editing display and may show wireframe. |
 | Exchange with another app | `import_fbx`, `export_fbx` | Save before importing animation. Verify scale, axes, skeleton, FPS and range in the receiving app. |
 | Operations without a named wrapper | `inspect_api`, `inspect_tool`, optional `run_script` | Read signatures first. Scripts run with full user privileges; they are not sandboxed. |
@@ -83,14 +84,29 @@ An action response says **dispatched**, not **completed**. Cascadeur's ActionMan
 - `physics_preview_toggle`, `physics_freeze_toggle`, `autoposing_toggle` and several display commands are toggles. Do not call them repeatedly to try to force an unknown state.
 - `physics_snap`, contact cleaning, retarget paste, unbaking, cycle edits and clipboard paste can substantially change animation. Checkpoint first and verify affected intervals afterward.
 - AutoPhysics has only limited direct editor methods in the tested build. The presence of a menu action does not prove a successful physics solve.
+- To learn whether AutoPhysics is on without toggling it blindly, dispatch `physics_snap` while it should be off: Cascadeur reports `No working Autophysics` and nothing changes. Only toggle `physics_preview_toggle` once the state is known.
+- `physics_snap` opens a dialog (apply to all frames or only key frames) that the API cannot answer; the user must choose. Poll poses until they change instead of assuming. With sparse key poses, "all frames" lets physics fill inbetweens.
+- Physics needs physically meaningful input: planted contacts that stay fixed in world space and forward travel. An in-place run (sliding stance feet) has no valid contacts and AutoPhysics turns it into hopping. Key poses sparsely; every-frame keys leave the solver no freedom.
+
+### Physics settings
+
+`physics_settings` lists the active scene's Physics Settings panel by group and name (85 settings in the tested build), e.g. `AutoPhysics` / `Secondary motion` (on/off), `AutoPhysics` / `Secondary alpha` (0-100), `Secondary motion` / `Floor collision`, `Ragdoll` / `With gravity`. Names repeat across groups, so always pass both. `set_physics_settings` requires `expected_scene`, validates every change before writing any, and reads each value back.
+
+- These settings are not reachable through Cascadeur's Python API. The tools drive the panel's own settings units (`view::ViewSettingsUnit.setValue`) by running a small JavaScript walker inside Cascadeur's QML engine. A Cascadeur update can change that structure; the tools then fail with a clear error instead of guessing.
+- The panel must be open and visible (Window > Physics Settings, floating or docked at the front). The tools do not toggle it, because the menu command is a toggle. Collapsed groups are not listed; ask the user to expand them.
+- Each scene tab owns a copy of the panel, and only the active scene's copy is visible. Values are saved in the `.casc` file and restored when it is reopened.
+- Changing settings makes AutoPhysics recompute. Save a checkpoint first, then inspect and snap again.
+- Secondary motion adds overlap/jiggle on top of the physics pass. Start with a low alpha (20-30) for realistic characters and compare with and without.
 - The tested app reported `export_available=true` and `pro_features_available=false`. Query those flags on every installation; do not promise Pro-only results.
 - Additive animation layers are different from the animation tracks in `list_tracks`. The tested `AnimationLayersTool` editor exposed no public methods. Additive-layer editing is not claimed as a verified feature.
 - Mocap, motion generation, retargeting and rig generation are not validated by the body/finger test. Explore the actual API and license before attempting them. Cloud/model-backed tools may have additional requirements or costs.
 
 ## Do not use these shortcuts
 
+- **Do not call `QCoreApplication.processEvents()` (or otherwise pump the Qt event loop) from a script.** It re-enters Cascadeur's own Python event handlers inside the bridge and crashed the tested build with `EXC_BAD_ACCESS`. Return from the call and read results in a later call instead.
 - **Do not call `RenderToFile.play_to_video_file` through a script on the tested build.** It crashed Cascadeur with `EXC_BAD_ACCESS` in `PlayToFileDialog::viewModel()`. It is deliberately absent from the normal tools. Capture PNG frames instead; assemble them outside Cascadeur if a video is needed. The native image-sequence render call is also unverified.
 - **Do not use `DataSourceManager.save_scene_as` as proof of saving.** In the live test it left the original file unchanged on the same-path save. The normal save tool uses `view.save(path)`, and saved animation was reopened and checked.
+- Do not trust inbetween frames read right after keying without a refresh. Cascadeur recomputes inbetween values lazily: only a timeline visit that rests about a second triggers it (about +/-4 frames per visit). Until then `get_pose` and unrefreshed samples can return a pose from an earlier key, which looks like teleporting feet. `sample_motion` with `refresh="auto"` (default) visits the range after edits made through this server (about 1 s per 6 frames); use `"always"` after editing in Cascadeur's UI. `generate_update`, the scene interpolator and `run_update` did not reproduce the visit in testing.
 - Do not mistake playback bounds for available animation frames. Scripts creating keys must call `model_editor.fit_animation_size_by_layers()` before writing values at new frames. This method existed at runtime but was missing from the installed stubs.
 - Do not edit every object in a character indiscriminately. Helpers, solver outputs, animation controls and mesh data serve different purposes.
 - Do not use `set_properties` for guessed physics channels or unsupported types. Use named transform tools for pose changes, and inspect exact properties first.

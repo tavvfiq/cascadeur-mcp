@@ -979,7 +979,7 @@
   },
   {
     "name": "cascadeur_sample_motion",
-    "description": "Sample global trajectories, path lengths and maximum step distances. Useful for drift/jumps; not an artistic quality score.",
+    "description": "Sample global trajectories, path lengths and maximum step distances. Useful for drift/jumps; not an artistic quality score. Inbetween frames can be stale right after keying; refresh visits the range on the timeline so Cascadeur recomputes them (about 1 s per 6 frames, current frame restored). 'auto' refreshes only after edits made through this server; use 'always' after editing in Cascadeur's UI.",
     "inputSchema": {
       "properties": {
         "objects": {
@@ -1009,6 +1009,16 @@
           "minimum": 1,
           "title": "Step",
           "type": "integer"
+        },
+        "refresh": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "title": "Refresh",
+          "type": "string"
         }
       },
       "required": [
@@ -1016,8 +1026,8 @@
         "first",
         "last"
       ],
-      "title": "cascadeur_sample_motionArguments",
-      "type": "object"
+      "type": "object",
+      "title": "cascadeur_sample_motionArguments"
     },
     "annotations": {
       "readOnlyHint": true,
@@ -1353,6 +1363,106 @@
       ],
       "title": "cascadeur_run_actionArguments",
       "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "cascadeur_physics_settings",
+    "description": "Read the active scene's Physics Settings panel: AutoPhysics switches and alphas (secondary motion, physics alpha, compensation, separation), ragdoll, corrector weights. The panel must be open and visible (Window > Physics Settings); collapsed groups are not listed. Read via the UI, not a supported API.",
+    "inputSchema": {
+      "properties": {
+        "query": {
+          "default": "",
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "title": "cascadeur_physics_settingsArguments"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "cascadeur_set_physics_settings",
+    "description": "Set Physics Settings values by group and name (from physics_settings) on an explicitly named active scene. Each value is type/range-checked and read back. AutoPhysics recomputes; inspect and snap afterwards.",
+    "inputSchema": {
+      "properties": {
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/PhysicsSettingChange"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Changes",
+          "type": "array"
+        },
+        "expected_scene": {
+          "title": "Expected Scene",
+          "type": "string"
+        }
+      },
+      "required": [
+        "changes",
+        "expected_scene"
+      ],
+      "type": "object",
+      "$defs": {
+        "PhysicsSettingChange": {
+          "additionalProperties": false,
+          "properties": {
+            "group": {
+              "description": "Group header from physics_settings, e.g. 'AutoPhysics' or 'Secondary motion'.",
+              "title": "Group",
+              "type": "string"
+            },
+            "name": {
+              "description": "Setting name, e.g. 'Secondary alpha'.",
+              "title": "Name",
+              "type": "string"
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "title": "Value"
+            },
+            "index": {
+              "default": 0,
+              "description": "Control index for settings with several controls.",
+              "maximum": 7,
+              "minimum": 0,
+              "title": "Index",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "group",
+            "name",
+            "value"
+          ],
+          "title": "PhysicsSettingChange",
+          "type": "object"
+        }
+      },
+      "title": "cascadeur_set_physics_settingsArguments"
     },
     "annotations": {
       "readOnlyHint": false,

@@ -50,6 +50,20 @@ Calling `csc.tools.RenderToFile.play_to_video_file` on the tested build caused a
 
 The direct video-export tool was removed. `take_image` works and is the supported preview path. The native `play_to_images_sequence` API was not tested and is not presented as a verified substitute. Do not retry the crashing video call from an advanced script. Capture PNG frames and encode outside Cascadeur instead.
 
+### Physics settings live only in the UI; pumping events crashed the app
+
+AutoPhysics settings such as secondary motion and its alpha are not exposed by the Python API (`SettingsManager`/`SettingsHandler` are read-only key lookups; the AutoPhysics editor only exposes `turn_off`). Each Physics Settings control binds a `view::ViewSettingsUnit` (`unitData`) with a `value` property and `setValue`. On Cascadeur 2026.2.3 (macOS), calling `setValue` on the visible panel's unit switched `Secondary motion` on and set `Secondary alpha` from 90 to 30; the panel buttons updated and the other scene tab's copy stayed unchanged, confirming per-scene settings. Out-of-range, wrong-type and unknown-name changes were rejected before any write.
+
+During exploration, a script that called `QCoreApplication.processEvents()` inside the bridge crashed Cascadeur (`EXC_BAD_ACCESS` in `PyImport_ImportModule`, re-entered from a `presenter::PythonEvents` timer). The physics-settings code never pumps events.
+
+A first implementation walked the QML tree with PySide item wrappers. It worked in a fresh session but failed after the panel was closed, reopened or undocked: PySide kept stale wrappers (`Internal C++ object already deleted`) that blocked the rebuilt items, even after explicit invalidation. The tools now run the walk as JavaScript in Cascadeur's QML engine and exchange JSON; reads and writes kept working across two close/reopen cycles. Values persist in the saved scene.
+
+Effect on a solve: on the heavy run, `Secondary motion` on at alpha 30 changed the snapped result by at most 0.18 units on the hands and 0.44 on the toes compared with the same run without it, with no measurable change in acceleration, overlap timing or contacts. Higher alphas were not measured.
+
+### Inbetween frames are computed lazily
+
+Keying a 150-frame cycle in batches of 13 keyframes left 19 inbetween frames (107-148) holding poses from earlier keys, while every key frame was correct. Waiting 30 s did not fix them; neither did `SceneUpdater.generate_update()`, `get_interpolator().reload()/interpolate()`, or `run_update` on the point positions (`run_update` on all data raised a dependency-cycle error). A timeline visit that rested about 1 s recomputed roughly +/-4 frames around it; visits of 0.1-0.3 s did nothing. `sample_motion` therefore visits every sixth frame for 1 s before sampling: on the stale cycle it returned 0 stale frames in 28 s, versus 19 without refresh.
+
 ## Discovered, not proven by this test
 
 The live capability query found tools including AutoPhysics, AutoPosing, Mirror, BallisticTrajectory, Attractor, Rigging, Retargeting, AnimationUnbaking, Inbetweening, Mocap, AnimationLayers, FBX/GLB/USD loaders and RenderToFile.

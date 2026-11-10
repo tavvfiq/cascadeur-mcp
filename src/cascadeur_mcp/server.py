@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from pathlib import Path
@@ -11,6 +12,24 @@ from mcp.types import ImageContent, TextContent, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .bridge import Bridge, BridgeError
+
+# A timeline visit must rest about 1 s before Cascadeur recomputes inbetweens,
+# and one visit refreshed about +/-4 frames in testing.
+REFRESH_STRIDE = 6
+REFRESH_DWELL_SECONDS = 1.0
+
+# Bridge operations that never change animation data (frame and camera moves
+# included: they do not make inbetween values stale).
+READ_METHODS = frozenset(
+    {
+        "capabilities", "get_state", "list_scenes", "inspect_api", "inspect_tool",
+        "list_objects", "rig_summary", "get_object", "get_pose", "list_tracks",
+        "sample_motion", "get_camera", "set_camera", "frame_objects",
+        "capture_viewport", "set_view_mode", "set_frame", "list_actions",
+        "physics_settings", "select_objects", "select_frames", "save_scene",
+        "export_fbx",
+    }
+)
 
 Frame = Annotated[int, Field(ge=0, le=100000)]
 Names = Annotated[list[str], Field(min_length=1, max_length=200)]
@@ -64,6 +83,18 @@ class PropertyChange(BaseModel):
     value: bool | int | float | list[float]
 
 
+class PhysicsSettingChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    group: str = Field(
+        description="Group header from physics_settings, e.g. 'AutoPhysics' or 'Secondary motion'."
+    )
+    name: str = Field(description="Setting name, e.g. 'Secondary alpha'.")
+    value: bool | int | float
+    index: Annotated[int, Field(ge=0, le=7)] = Field(
+        default=0, description="Control index for settings with several controls."
+    )
+
+
 def create_server(bridge: Bridge):
     server = MCPServer(
         "Cascadeur",
@@ -88,7 +119,7 @@ def create_server(bridge: Bridge):
         openWorldHint=False,
     )
 
-    async def call(method, **params):
+    async def call_bridge(method, **params):
         try:
             value = await bridge.call(method, params)
             if value.get("log") or value.get("messages"):
@@ -96,6 +127,28 @@ def create_server(bridge: Bridge):
             return value["result"]
         except (BridgeError, ValueError, OSError) as exc:
             raise ToolError(str(exc)) from exc
+
+    edits = {"dirty": True}
+
+    async def call(method, **params):
+        if method not in READ_METHODS:
+            edits["dirty"] = True
+        return await call_bridge(method, **params)
+
+    async def refresh_frames(first, last):
+        # Cascadeur recomputes inbetween values lazily: a timeline visit that rests
+        # about a second triggers a recompute of nearby frames. No Python API call
+        # reproduced this, and pumping events inside the app crashed it, so the
+        # visits are driven from here as separate bridge calls.
+        original = (await call_bridge("get_state"))["frame"]
+        frames = list(range(first, last + 1, REFRESH_STRIDE))
+        if frames[-1] != last:
+            frames.append(last)
+        for frame in frames:
+            await call_bridge("set_frame", frame=frame)
+            await asyncio.sleep(REFRESH_DWELL_SECONDS)
+        await call_bridge("set_frame", frame=original)
+        edits["dirty"] = False
 
     @server.tool(annotations=read)
     async def cascadeur_status() -> dict:
@@ -274,8 +327,11 @@ def create_server(bridge: Bridge):
         first: Frame,
         last: Frame,
         step: Annotated[int, Field(ge=1, le=1000)] = 1,
+        refresh: Literal["auto", "always", "never"] = "auto",
     ) -> dict:
-        """Sample global trajectories, path lengths and maximum step distances. Useful for drift/jumps; not an artistic quality score."""
+        """Sample global trajectories, path lengths and maximum step distances. Useful for drift/jumps; not an artistic quality score. Inbetween frames can be stale right after keying; refresh visits the range on the timeline so Cascadeur recomputes them (about 1 s per 6 frames, current frame restored). 'auto' refreshes only after edits made through this server; use 'always' after editing in Cascadeur's UI."""
+        if refresh == "always" or (refresh == "auto" and edits["dirty"]):
+            await refresh_frames(first, last)
         return await call(
             "sample_motion", objects=objects, first=first, last=last, step=step
         )
@@ -373,6 +429,23 @@ def create_server(bridge: Bridge):
     async def cascadeur_run_action(name: str, expected_scene: str) -> dict:
         """Dispatch a named action from list_actions on an explicitly named scene. Many are toggles or depend on selection/license. Dispatch is not verified success."""
         return await call("run_action", name=name, expected_scene=expected_scene)
+
+    @server.tool(annotations=read)
+    async def cascadeur_physics_settings(query: str = "") -> dict:
+        """Read the active scene's Physics Settings panel: AutoPhysics switches and alphas (secondary motion, physics alpha, compensation, separation), ragdoll, corrector weights. The panel must be open and visible (Window > Physics Settings); collapsed groups are not listed. Read via the UI, not a supported API."""
+        return await call("physics_settings", query=query)
+
+    @server.tool(annotations=edit)
+    async def cascadeur_set_physics_settings(
+        changes: Annotated[list[PhysicsSettingChange], Field(min_length=1, max_length=50)],
+        expected_scene: str,
+    ) -> dict:
+        """Set Physics Settings values by group and name (from physics_settings) on an explicitly named active scene. Each value is type/range-checked and read back. AutoPhysics recomputes; inspect and snap afterwards."""
+        return await call(
+            "set_physics_settings",
+            changes=[c.model_dump() for c in changes],
+            expected_scene=expected_scene,
+        )
 
     @server.tool(annotations=read)
     async def cascadeur_inspect_api(

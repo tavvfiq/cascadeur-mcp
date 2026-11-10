@@ -2,7 +2,7 @@
 
 An independent local MCP server for controlling Cascadeur from **Codex, Claude Desktop, Claude Code, Cursor**, and other stdio MCP clients.
 
-It provides **36 named tools** for scene and rig inspection, body/finger posing, keyframes, interpolation, timeline selection, camera controls, PNG previews and FBX import/export. A curated action catalog exposes physics, AutoPosing, retargeting, cycles and review commands with explicit verification limits. An optional 37th tool enables advanced Python scripting.
+It provides **38 named tools** for scene and rig inspection, body/finger posing, keyframes, interpolation, timeline selection, camera controls, PNG previews, FBX import/export and AutoPhysics settings (secondary motion, physics alpha, ragdoll and corrector weights). A curated action catalog exposes physics, AutoPosing, retargeting, cycles and review commands with explicit verification limits. An optional 39th tool enables advanced Python scripting.
 
 **Start with the [AI operating guide](docs/AI_GUIDE.md).** It explains which controls to use, how to verify body and finger animation, and which APIs to avoid. The guide is also served to agents as `cascadeur://guide`.
 
@@ -138,6 +138,7 @@ For an animation task, provide the character, reference, action, intended durati
 | Animation | Body/finger pose batches, keys, interpolation, track/frame selection, motion sampling |
 | Review | Camera inspection/placement, framing, display modes, PNG images returned through MCP |
 | Exchange | FBX scene/model/animation import and scene/animation/selection export |
+| Physics settings | Read/set the active scene's Physics Settings panel by group and name, range-checked and read back |
 | Physics and advanced menu tools | Curated action catalog; state-dependent, not all verified |
 | Wider API | Live signature discovery; optional Python execution |
 
@@ -148,7 +149,9 @@ See [tool schemas](docs/tools.json) for machine-readable arguments, and [the gui
 - **Native Python video export crashed the tested Cascadeur build.** It is not exposed as a normal tool. Capture PNG frames instead. See [TESTING.md](docs/TESTING.md).
 - Additive layers, mocap, AI motion generation, retargeting quality and rig generation are not claimed as verified features. Discover APIs and check your license before use.
 - Menu actions report dispatch, not successful completion. Many commands are toggles, need a selection, or can open dialogs.
+- Physics settings are not in Cascadeur's Python API. The physics-settings tools drive the Physics Settings panel's own settings objects in the live UI, so the panel must be visible, and a Cascadeur update can break them (they fail with an error rather than guess).
 - The server checks normal input/output file paths against the workspace. This is not an operating-system sandbox. Projects may reference other assets.
+- Cascadeur computes inbetween frames lazily. `sample_motion` refreshes them by visiting the range on the timeline (about 1 s per 6 frames) after edits made through the server; use `refresh="always"` after editing in Cascadeur's UI.
 - A timeout or application crash can leave an uncertain result. Inspect before retrying. Save checkpoints before substantial changes.
 
 ## Advanced scripting
