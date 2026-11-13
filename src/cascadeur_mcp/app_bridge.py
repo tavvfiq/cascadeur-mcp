@@ -44,12 +44,37 @@ def atomic_json(path, value):
 def stop():
     global _timer, _state
     if _timer is not None:
+        import shiboken6
+
         _timer.stop()
-        _timer.deleteLater()
+        # Delete now, while Python is alive. deleteLater never runs after the
+        # event loop has ended, so the timer would outlive the interpreter.
+        if shiboken6.isValid(_timer):
+            shiboken6.delete(_timer)
         _timer = None
     if _state is not None:
         (_state["directory"] / "status.json").unlink(missing_ok=True)
         _state = None
+
+
+def _register_exit_cleanup():
+    import atexit
+
+    # Re-running the startup script reloads this module, so mark the
+    # registration on a long-lived module instead of a module global.
+    import builtins
+
+    if not getattr(builtins, "_cascadeur_mcp_atexit", False):
+        atexit.register(lambda: _stop_current())
+        builtins._cascadeur_mcp_atexit = True
+
+
+def _stop_current():
+    import sys
+
+    bridge = sys.modules.get(__name__)
+    if bridge is not None:
+        bridge.stop()
 
 
 def start(bridge_dir, workspace, allow_scripts=False):
@@ -83,7 +108,10 @@ def start(bridge_dir, workspace, allow_scripts=False):
         last_status=0,
     )
     _state["workspace"].mkdir(parents=True, exist_ok=True)
-    _timer = QTimer(QCoreApplication.instance())
+    # No Qt parent: a timer owned by QApplication is destroyed after Python has
+    # shut down, and deleting its Python wrapper then crashed Cascadeur on quit.
+    _timer = QTimer()
+    _register_exit_cleanup()
     _timer.setInterval(50)
     _timer.timeout.connect(_poll)
     _timer.start()
